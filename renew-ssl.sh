@@ -130,27 +130,98 @@ domain_name() {
     fi
 }
 
-# Retourne le premier fichier .cer d'un répertoire de certificat.
-# Utilise find (robuste avec les espaces) plutôt que "ls | head".
+# Retourne le fichier du certificat feuille (celui du domaine), et non la CA
+# ou la chaîne. Un répertoire acme.sh contient plusieurs .cer :
+#   <domaine>.cer   -> certificat du domaine (feuille)  <-- celui qu'on veut
+#   ca.cer          -> certificat de l'autorité (CA)      (ex. expire en 2028)
+#   fullchain.cer   -> feuille + CA (chaîne complète)
+# Sans ce tri, on peut lire la date d'expiration de la CA au lieu de celle du
+# domaine et faussement écarter le certificat. On préfère donc <répertoire>.cer,
+# puis fullchain.cer (openssl lit la feuille en premier), et en dernier recours
+# tout .cer qui n'est ni la CA ni la chaîne. Utilise find (robuste espaces).
 cert_file_in() {
     local cert_dir="$1"
-    find "$cert_dir" -maxdepth 1 -type f -name '*.cer' -print -quit 2>/dev/null || true
+    local dir_name file
+    dir_name=${cert_dir%/}
+    dir_name=${dir_name##*/}
+
+    if [ -f "$cert_dir/$dir_name.cer" ]; then
+        printf '%s\n' "$cert_dir/$dir_name.cer"
+        return 0
+    fi
+
+    if [ -f "$cert_dir/fullchain.cer" ]; then
+        printf '%s\n' "$cert_dir/fullchain.cer"
+        return 0
+    fi
+
+    while IFS= read -r -d '' file; do
+        case "${file##*/}" in
+            ca.cer|chain.cer|fullchain.cer) continue ;;
+        esac
+        printf '%s\n' "$file"
+        return 0
+    done < <(find "$cert_dir" -maxdepth 1 -type f -name '*.cer' -print0 2>/dev/null || true)
+
+    return 0
 }
 
 # Retourne le nombre de jours restants avant expiration (vide si erreur).
 days_until_expiry() {
     local cert_file="$1"
-    local end_date end_epoch now_epoch
+    local end_date month day time year month_num end_epoch now_epoch remaining
 
-    end_date=$(openssl x509 -in "$cert_file" -noout -enddate 2>/dev/null \
-        | cut -d= -f2- || true)
-    [ -n "$end_date" ] || return 0
+    end_date=$(openssl x509 -in "$cert_file" -noout -enddate 2>/dev/null || true)
+    end_date=${end_date#notAfter=}
 
-    end_epoch=$(date -d "$end_date" +%s 2>/dev/null || true)
-    [ -n "$end_epoch" ] || return 0
+    if [ -z "$end_date" ]; then
+        warn "Impossible de lire la date d'expiration de : $cert_file"
+        return 0
+    fi
+
+    # La sortie d'openssl a toujours le format fixe "Mmm DD HH:MM:SS YYYY GMT"
+    # (mois en anglais, heure GMT), indépendamment de la locale du système.
+    # On parse ces champs nous-mêmes puis on construit une date ISO-8601, dont
+    # le parsing par `date -d` est fiable et identique sur toutes les locales
+    # et versions de GNU date — contrairement au parsing direct de la chaîne
+    # libre anglaise "Oct 29 22:00:54 2026 GMT", qui peut être mal interprétée
+    # selon la locale/version (ex. "expire dans 763 jour(s)" au lieu de 89).
+    read -r month day time year _ <<< "$end_date"
+
+    case "$month" in
+        Jan) month_num=01 ;; Feb) month_num=02 ;; Mar) month_num=03 ;;
+        Apr) month_num=04 ;; May) month_num=05 ;; Jun) month_num=06 ;;
+        Jul) month_num=07 ;; Aug) month_num=08 ;; Sep) month_num=09 ;;
+        Oct) month_num=10 ;; Nov) month_num=11 ;; Dec) month_num=12 ;;
+        *) warn "Mois inattendu ('$month') dans : $end_date"
+           return 0 ;;
+    esac
+
+    if ! [[ "$day" =~ ^[0-9]{1,2}$ ]] || ! [[ "$time" =~ ^[0-9]{2}:[0-9]{2}:[0-9]{2}$ ]] \
+        || ! [[ "$year" =~ ^[0-9]{4}$ ]]; then
+        warn "Date d'expiration illisible : $end_date"
+        return 0
+    fi
+
+    end_epoch=$(date -u -d "$year-$month_num-$day $time UTC" +%s 2>/dev/null || true)
+    if [ -z "$end_epoch" ]; then
+        warn "Impossible d'interpréter la date d'expiration : $end_date"
+        return 0
+    fi
 
     now_epoch=$(date +%s)
-    printf '%s\n' "$(( (end_epoch - now_epoch) / 86400 ))"
+    remaining=$(( (end_epoch - now_epoch) / 86400 ))
+
+    # Garde-fou : un certificat ACME (Let's Encrypt / ZeroSSL) est valable au
+    # maximum ~90 jours. Une valeur dans plusieurs centaines de jours (ou un
+    # passé lointain) trahit un calcul erroné : on ignore le certificat plutôt
+    # que de le renouveler (ou de l'afficher) à tort.
+    if [ "$remaining" -gt 400 ] || [ "$remaining" -lt -400 ]; then
+        warn "Date d'expiration aberrante pour $cert_file : $end_date (${remaining} jour(s)) — certificat ignoré"
+        return 0
+    fi
+
+    printf '%s\n' "$remaining"
 }
 
 # --------------------------------------------------------------------------
