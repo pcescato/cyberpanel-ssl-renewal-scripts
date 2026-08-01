@@ -37,7 +37,7 @@ log() { printf '[renew-ssl][%s] %s\n' "$(date '+%F %T')" "$*"; }
 warn() { printf '[renew-ssl][%s][WARN] %s\n' "$(date '+%F %T')" "$*" >&2; }
 
 die() {
-    printf '[renew-ssl][ERREUR] %s\n' "$*" >&2
+    printf '[renew-ssl][ERROR] %s\n' "$*" >&2
     exit 1
 }
 
@@ -50,27 +50,27 @@ usage() {
 Usage:
   renew-ssl.sh [OPTIONS] [ARG]
 
-Modes :
-  renew-ssl.sh                 Mode auto : renouvelle les certificats qui
-                               expirent dans les 10 prochains jours.
-  renew-ssl.sh <jours>         Mode auto avec seuil personnalisé.
-  renew-ssl.sh <domaine>       Mode domaine unique : force le renouvellement
-                               d'un domaine précis (RSA ou ECC).
-  renew-ssl.sh --check         Simulation : liste les certificats et indique
-                               lesquels seraient renouvelés, sans rien
-                               modifier ni redémarrer OpenLiteSpeed.
+Modes:
+  renew-ssl.sh                 Auto mode: renews certificates that expire
+                               within the next 10 days.
+  renew-ssl.sh <days>          Auto mode with a custom threshold.
+  renew-ssl.sh <domain>        Single domain mode: forces renewal of a
+                               specific domain (RSA or ECC).
+  renew-ssl.sh --check         Simulation: lists the certificates and shows
+                               which ones would be renewed, without changing
+                               anything or restarting OpenLiteSpeed.
 
-Options :
-  -h, --help                   Affiche cette aide.
+Options:
+  -h, --help                   Shows this help.
 
-Exemples :
+Examples:
   renew-ssl.sh
   renew-ssl.sh 30
   renew-ssl.sh example.com
   renew-ssl.sh --check
 
-Variables d'environnement (optionnelles) :
-  ACME, ACME_HOME, LSWS, CERT_BASE   Chemins personnalisés.
+Environment variables (optional):
+  ACME, ACME_HOME, LSWS, CERT_BASE   Custom paths.
 EOF
 }
 
@@ -87,7 +87,7 @@ parse_args() {
             SIMULATION=1
             ;;
         -*)
-            die "Option inconnue : $1" $'\n'"Utilisez -h ou --help pour l'aide."
+            die "Unknown option: $1" $'\n'"Use -h or --help for help."
             ;;
         *[!0-9]*)
             MODE=single
@@ -99,7 +99,7 @@ parse_args() {
     esac
 
     if ! [[ "$THRESHOLD" =~ ^[0-9]+$ ]]; then
-        die "Seuil invalide : $THRESHOLD (entier positif attendu)"
+        die "Invalid threshold: $THRESHOLD (a positive integer is expected)"
     fi
 }
 
@@ -108,11 +108,11 @@ parse_args() {
 # --------------------------------------------------------------------------
 
 verify_prereqs() {
-    [ -x "$ACME" ] || die "acme.sh introuvable ou non exécutable : $ACME"
-    [ -d "$ACME_HOME" ] || die "Dossier acme.sh introuvable : $ACME_HOME"
-    command -v openssl >/dev/null 2>&1 || die "openssl introuvable"
-    command -v date    >/dev/null 2>&1 || die "date introuvable"
-    command -v find    >/dev/null 2>&1 || die "find introuvable"
+    [ -x "$ACME" ] || die "acme.sh not found or not executable: $ACME"
+    [ -d "$ACME_HOME" ] || die "acme.sh directory not found: $ACME_HOME"
+    command -v openssl >/dev/null 2>&1 || die "openssl not found"
+    command -v date    >/dev/null 2>&1 || die "date not found"
+    command -v find    >/dev/null 2>&1 || die "find not found"
 }
 
 # --------------------------------------------------------------------------
@@ -175,7 +175,7 @@ days_until_expiry() {
     end_date=${end_date#notAfter=}
 
     if [ -z "$end_date" ]; then
-        warn "Impossible de lire la date d'expiration de : $cert_file"
+        warn "Cannot read the expiry date from: $cert_file"
         return 0
     fi
 
@@ -193,19 +193,19 @@ days_until_expiry() {
         Apr) month_num=04 ;; May) month_num=05 ;; Jun) month_num=06 ;;
         Jul) month_num=07 ;; Aug) month_num=08 ;; Sep) month_num=09 ;;
         Oct) month_num=10 ;; Nov) month_num=11 ;; Dec) month_num=12 ;;
-        *) warn "Mois inattendu ('$month') dans : $end_date"
+        *) warn "Unexpected month ('$month') in: $end_date"
            return 0 ;;
     esac
 
     if ! [[ "$day" =~ ^[0-9]{1,2}$ ]] || ! [[ "$time" =~ ^[0-9]{2}:[0-9]{2}:[0-9]{2}$ ]] \
         || ! [[ "$year" =~ ^[0-9]{4}$ ]]; then
-        warn "Date d'expiration illisible : $end_date"
+        warn "Unreadable expiry date: $end_date"
         return 0
     fi
 
     end_epoch=$(date -u -d "$year-$month_num-$day $time UTC" +%s 2>/dev/null || true)
     if [ -z "$end_epoch" ]; then
-        warn "Impossible d'interpréter la date d'expiration : $end_date"
+        warn "Cannot interpret the expiry date: $end_date"
         return 0
     fi
 
@@ -217,7 +217,7 @@ days_until_expiry() {
     # signals a bad calculation: skip the certificate instead of renewing (or
     # displaying) it wrongly.
     if [ "$remaining" -gt 400 ] || [ "$remaining" -lt -400 ]; then
-        warn "Date d'expiration aberrante pour $cert_file : $end_date (${remaining} jour(s)) — certificat ignoré"
+        warn "Abnormal expiry date for $cert_file: $end_date (${remaining} day(s)) — certificate skipped"
         return 0
     fi
 
@@ -241,18 +241,18 @@ renew_one() {
     cert_dir="$CERT_BASE/$domain"
 
     if [ "$SIMULATION" -eq 1 ]; then
-        log "(simulation) $domain : serait renouvelé — aucun changement effectué"
+        log "(simulation) $domain: would be renewed — no change made"
         return 0
     fi
 
-    log "Renouvellement de $domain en cours..."
+    log "Renewing $domain..."
 
     # --force is intentional: CyberPanel's built-in renewal scheduler is
     # unreliable, so we force re-issuance as soon as we decide a renewal is
     # needed (expiry window exceeded in auto mode, or explicit request in
     # single-domain mode).
     if ! "$ACME" --renew -d "$domain" --force "${ecc_args[@]}"; then
-        warn "Échec du renouvellement pour $domain"
+        warn "Renewal failed for $domain"
         return 1
     fi
 
@@ -263,11 +263,11 @@ renew_one() {
         "${ecc_args[@]}" \
         --key-file "$cert_dir/privkey.pem" \
         --fullchain-file "$cert_dir/fullchain.pem"; then
-        warn "Échec de l'installation pour $domain"
+        warn "Installation failed for $domain"
         return 1
     fi
 
-    log "$domain renouvelé avec succès"
+    log "$domain renewed successfully"
     return 0
 }
 
@@ -278,11 +278,11 @@ renew_one() {
 # Restarts OpenLiteSpeed only if the binary is present and executable.
 restart_ols() {
     if [ ! -x "$LSWS" ]; then
-        warn "OpenLiteSpeed introuvable ou non exécutable : $LSWS"
-        warn "Certificats installés, mais OpenLiteSpeed n'a pas été redémarré."
+        warn "OpenLiteSpeed not found or not executable: $LSWS"
+        warn "Certificates installed, but OpenLiteSpeed was not restarted."
         return 1
     fi
-    log "Redémarrage d'OpenLiteSpeed..."
+    log "Restarting OpenLiteSpeed..."
     "$LSWS" restart
 }
 
@@ -335,7 +335,7 @@ run_auto_mode() {
     local cert_dir dir_name cert_file remaining domain
     local rc=0
 
-    log "Recherche des certificats expirant dans moins de ${threshold} jour(s)..."
+    log "Searching for certificates expiring within ${threshold} day(s)..."
 
     shopt -s nullglob
     for cert_dir in "$ACME_HOME"/*/; do
@@ -352,7 +352,7 @@ run_auto_mode() {
 
         checked=$((checked + 1))
         domain=$(domain_name "$dir_name")
-        printf '  - %s (expire dans %s jour(s))\n' "$domain" "$remaining"
+        printf '  - %s (expires in %s day(s))\n' "$domain" "$remaining"
 
         if [ "$remaining" -le "$threshold" ]; then
             needing=$((needing + 1))
@@ -387,8 +387,8 @@ run_single_domain_mode() {
     [ -d "$ACME_HOME/${domain}_ecc" ] && dir_list+=("${domain}_ecc")
 
     if [ "${#dir_list[@]}" -eq 0 ]; then
-        die "Aucun certificat trouvé pour $domain dans $ACME_HOME" \
-            $'\n'"Vérifiez le nom de domaine, ou utilisez --check pour lister les certificats."
+        die "No certificate found for $domain in $ACME_HOME" \
+            $'\n'"Check the domain name, or use --check to list the certificates."
     fi
 
     for dir_name in "${dir_list[@]}"; do

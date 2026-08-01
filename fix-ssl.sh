@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
 #
-# fix-ssl.sh — Ré-émet un certificat SSL pour CyberPanel via acme.sh.
+# fix-ssl.sh — Re-issues an SSL certificate for CyberPanel via acme.sh.
 #
-# CyberPanel 2.x peut laisser acme.sh en mode staging ou avec un certificat
-# cassé. Ce script re-émet un certificat de zéro : il bascule acme.sh sur le
-# CA de production Let's Encrypt, supprime l'ancienne inscription du domaine,
-# émet un nouveau certificat (HTTP-01 via le webroot), l'installe dans
-# /etc/letsencrypt/live/<domain>/ puis redémarre OpenLiteSpeed.
+# CyberPanel 2.x can leave acme.sh in staging mode or with a broken
+# certificate. This script re-issues the certificate from scratch: it switches
+# acme.sh to the Let's Encrypt production CA, removes the previous domain
+# registration, issues a new certificate (HTTP-01 via the webroot), installs
+# it in /etc/letsencrypt/live/<domain>/ and restarts OpenLiteSpeed.
 #
-# Avant d'émettre, il vérifie que le chemin du challenge HTTP-01 est
-# réellement accessible publiquement. Après installation, il vérifie que le
-# certificat réellement servi par le serveur correspond au nouveau certificat.
+# Before issuing, it checks that the HTTP-01 challenge path is actually
+# reachable from the public internet. After installation, it checks that the
+# certificate really served by the server matches the new certificate.
 #
-# AVANT de supprimer l'ancienne inscription (acme.sh --remove), le script
-# sauvegarde le certificat existant et la configuration acme.sh dans
+# BEFORE removing the previous registration (acme.sh --remove), the script
+# backs up the existing certificate and acme.sh configuration in
 # /root/ssl-backups/<domain>/<timestamp>/.
 #
-# Dependencies: bash, acme.sh, tar, openssl, curl (curl est optionnel : la
-# validation du webroot est ignorée avec un avertissement s'il est absent).
+# Dependencies: bash, acme.sh, tar, openssl, curl (curl is optional: the
+# webroot validation is skipped with a warning if it is absent).
 
 set -euo pipefail
 
@@ -28,7 +28,7 @@ set -euo pipefail
 DOMAIN="${1:-}"
 
 if [ -z "$DOMAIN" ]; then
-    echo "Usage: $0 domaine.tld"
+    echo "Usage: $0 domain.tld"
     exit 1
 fi
 
@@ -51,9 +51,9 @@ CURRENT_STEP=""
 report_error() {
     local rc=$?
     if [ -n "$CURRENT_STEP" ]; then
-        echo "Erreur lors de l'étape : ${CURRENT_STEP} (code ${rc})" >&2
+        echo "Error during step: ${CURRENT_STEP} (code ${rc})" >&2
     else
-        echo "Erreur inattendue (code ${rc})" >&2
+        echo "Unexpected error (code ${rc})" >&2
     fi
     exit "$rc"
 }
@@ -63,11 +63,11 @@ trap 'report_error' ERR
 # The pre-remove backup is the only way back, so its restore command is
 # always printed.
 fail_after_remove() {
-    echo "Erreur : $*" >&2
+    echo "Error: $*" >&2
     if [ -n "$ARCHIVE" ]; then
-        echo "L'ancien certificat n'est pas perdu, il est sauvegardé :" >&2
+        echo "The previous certificate is not lost, it is backed up at:" >&2
         echo "  ${ARCHIVE}" >&2
-        echo "Restauration : tar -xzf ${ARCHIVE} -P -C / && ${LSWS} restart" >&2
+        echo "Restore: tar -xzf ${ARCHIVE} -P -C / && ${LSWS} restart" >&2
     fi
     exit 1
 }
@@ -90,13 +90,13 @@ check_acme_challenge_path() {
     local response=""
 
     if [ ! -d "$WEBROOT" ]; then
-        echo "Erreur : webroot introuvable : $WEBROOT" >&2
-        echo "Vérifie le chemin du site CyberPanel" >&2
+        echo "Error: webroot not found: $WEBROOT" >&2
+        echo "Check the CyberPanel site path" >&2
         exit 1
     fi
 
     if ! command -v curl >/dev/null 2>&1; then
-        echo "Avertissement : curl introuvable, validation du webroot ignorée." >&2
+        echo "Warning: curl not found, webroot validation skipped." >&2
         return 0
     fi
 
@@ -104,13 +104,13 @@ check_acme_challenge_path() {
     # failing command inside a function, it just makes the function return
     # non-zero and exits silently at the call site.
     if ! mkdir -p "$challenge_dir"; then
-        echo "Erreur : impossible de créer $challenge_dir (webroot non inscriptible ?)." >&2
-        echo "Le challenge HTTP-01 ne pourra pas être servi : arrêt avant émission." >&2
+        echo "Error: cannot create $challenge_dir (webroot not writable?)." >&2
+        echo "The HTTP-01 challenge cannot be served: stopping before issuance." >&2
         exit 1
     fi
     if ! printf '%s' "$test_token" > "$challenge_dir/$test_file"; then
-        echo "Erreur : impossible d'écrire le fichier de test dans le webroot." >&2
-        echo "Le challenge HTTP-01 ne pourra pas être servi : arrêt avant émission." >&2
+        echo "Error: cannot write the test file into the webroot." >&2
+        echo "The HTTP-01 challenge cannot be served: stopping before issuance." >&2
         exit 1
     fi
 
@@ -123,15 +123,15 @@ check_acme_challenge_path() {
     rmdir "${WEBROOT}/.well-known" 2>/dev/null || true
 
     if [ "$response" != "$test_token" ]; then
-        echo "Erreur : le challenge HTTP-01 n'est pas accessible publiquement." >&2
-        echo "  URL testée : $url" >&2
-        echo "Le fichier de test n'a pas été servi correctement (DNS, port 80," >&2
-        echo "redirection ou réécriture du vhost). acme.sh échouerait lors de" >&2
-        echo "l'émission : arrêt avant toute modification." >&2
+        echo "Error: the HTTP-01 challenge is not publicly reachable." >&2
+        echo "  Tested URL: $url" >&2
+        echo "The test file was not served correctly (DNS, port 80," >&2
+        echo "vhost redirect or rewrite). acme.sh would fail during" >&2
+        echo "issuance: stopping before any modification." >&2
         exit 1
     fi
 
-    echo "Challenge HTTP-01 accessible : $url -> OK"
+    echo "HTTP-01 challenge reachable: $url -> OK"
 }
 
 # --------------------------------------------------------------------------
@@ -157,13 +157,13 @@ backup_cert() {
     done
 
     if [ "${#source_dirs[@]}" -eq 0 ]; then
-        echo "Aucun certificat existant à sauvegarder (première installation ?)."
+        echo "No existing certificate to back up (first installation?)."
         return 0
     fi
 
     if ! timestamp=$(date +%Y%m%d-%H%M%S); then
-        echo "Erreur : date introuvable ou illisible." >&2
-        echo "Aucune suppression ou remplacement n'a été effectué." >&2
+        echo "Error: date missing or unreadable." >&2
+        echo "No removal or replacement has been performed." >&2
         exit 1
     fi
     BACKUP_DIR="${BACKUP_ROOT}/${timestamp}"
@@ -173,17 +173,17 @@ backup_cert() {
     echo "Backup folder : ${BACKUP_DIR}"
 
     if ! mkdir -p "$BACKUP_DIR"; then
-        echo "Erreur : impossible de créer le dossier de sauvegarde : $BACKUP_DIR" >&2
-        echo "Aucune suppression ou remplacement n'a été effectué." >&2
+        echo "Error: cannot create the backup folder: $BACKUP_DIR" >&2
+        echo "No removal or replacement has been performed." >&2
         exit 1
     fi
     if ! tar -czf "$ARCHIVE" -P -C / "${source_dirs[@]}"; then
-        echo "Erreur : échec de la création de la sauvegarde." >&2
-        echo "Aucune suppression ou remplacement n'a été effectué." >&2
+        echo "Error: failed to create the backup." >&2
+        echo "No removal or replacement has been performed." >&2
         exit 1
     fi
 
-    echo "Sauvegarde créée : ${ARCHIVE}"
+    echo "Backup created: ${ARCHIVE}"
 }
 
 # --------------------------------------------------------------------------
@@ -206,8 +206,8 @@ verify_served_certificate() {
     local served_fingerprint=""
 
     if ! local_fingerprint=$(openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -fingerprint -sha256 2>/dev/null); then
-        echo "Erreur : impossible de lire le certificat local : $CERT_DIR/fullchain.pem" >&2
-        fail_after_remove "la lecture du certificat local a échoué"
+        echo "Error: cannot read the local certificate: $CERT_DIR/fullchain.pem" >&2
+        fail_after_remove "reading the local certificate failed"
     fi
     local_fingerprint=$(normalize_fingerprint "$local_fingerprint")
 
@@ -219,22 +219,22 @@ verify_served_certificate() {
     served_fingerprint=$(normalize_fingerprint "$served_fingerprint")
 
     if [ -z "$served_fingerprint" ]; then
-        echo "Erreur : impossible d'obtenir le certificat servi par ${DOMAIN}:443." >&2
-        echo "OpenLiteSpeed sert peut-être encore l'ancien certificat, ou HTTPS est" >&2
-        echo "injoignable. Redémarrez OpenLiteSpeed ($LSWS restart), puis relancez" >&2
-        echo "$0 ${DOMAIN}." >&2
+        echo "Error: cannot obtain the certificate served by ${DOMAIN}:443." >&2
+        echo "OpenLiteSpeed may still be serving the previous certificate, or" >&2
+        echo "HTTPS is unreachable. Restart OpenLiteSpeed ($LSWS restart)," >&2
+        echo "then run $0 ${DOMAIN}." >&2
         exit 1
     fi
 
     if [ "$served_fingerprint" != "$local_fingerprint" ]; then
-        echo "Erreur : OpenLiteSpeed sert encore l'ancien certificat." >&2
-        echo "  Certificat local : $local_fingerprint" >&2
-        echo "  Certificat servi : $served_fingerprint" >&2
-        echo "Redémarrez OpenLiteSpeed ($LSWS restart), puis relancez $0 ${DOMAIN}." >&2
+        echo "Error: OpenLiteSpeed is still serving the previous certificate." >&2
+        echo "  Local certificate: $local_fingerprint" >&2
+        echo "  Served certificate: $served_fingerprint" >&2
+        echo "Restart OpenLiteSpeed ($LSWS restart), then run $0 ${DOMAIN}." >&2
         exit 1
     fi
 
-    echo "Le certificat réellement servi par ${DOMAIN} correspond au nouveau certificat (SHA256 identique)."
+    echo "The certificate actually served by ${DOMAIN} matches the new certificate (identical SHA256)."
 }
 
 # --------------------------------------------------------------------------
@@ -242,82 +242,82 @@ verify_served_certificate() {
 # --------------------------------------------------------------------------
 
 echo "======================================"
-echo " Renouvellement SSL : ${DOMAIN}"
+echo " SSL Renewal: ${DOMAIN}"
 echo "======================================"
 
 # Check acme.sh
 if [ ! -x "$ACME" ]; then
-    echo "Erreur : acme.sh introuvable" >&2
+    echo "Error: acme.sh not found" >&2
     exit 1
 fi
 
 # Check required tools
-command -v openssl >/dev/null 2>&1 || { echo "Erreur : openssl introuvable" >&2; exit 1; }
-command -v tar     >/dev/null 2>&1 || { echo "Erreur : tar introuvable" >&2; exit 1; }
+command -v openssl >/dev/null 2>&1 || { echo "Error: openssl not found" >&2; exit 1; }
+command -v tar     >/dev/null 2>&1 || { echo "Error: tar not found" >&2; exit 1; }
 
-CURRENT_STEP="[1/8] Vérification du challenge HTTP-01"
-echo "[1/8] Vérification du challenge HTTP-01"
+CURRENT_STEP="[1/8] HTTP-01 challenge check"
+echo "[1/8] HTTP-01 challenge check"
 check_acme_challenge_path
 
-CURRENT_STEP="[2/8] Sauvegarde de l'ancien certificat"
-echo "[2/8] Sauvegarde de l'ancien certificat"
+CURRENT_STEP="[2/8] Backup of the previous certificate"
+echo "[2/8] Backup of the previous certificate"
 backup_cert
 
-CURRENT_STEP="[3/8] Passage sur Let's Encrypt production"
-echo "[3/8] Passage sur Let's Encrypt production"
+CURRENT_STEP="[3/8] Switch to Let's Encrypt production"
+echo "[3/8] Switch to Let's Encrypt production"
 if ! "$ACME" --set-default-ca --server letsencrypt; then
-    echo "Erreur : acme.sh n'a pas pu basculer sur le CA de production." >&2
+    echo "Error: acme.sh could not switch to the production CA." >&2
     exit 1
 fi
 
-CURRENT_STEP="[4/8] Suppression éventuelle du mode staging"
-echo "[4/8] Suppression éventuelle du mode staging"
+CURRENT_STEP="[4/8] Remove any staging mode registration"
+echo "[4/8] Remove any staging mode registration"
 "$ACME" --remove -d "$DOMAIN" >/dev/null 2>&1 || true
 
-CURRENT_STEP="[5/8] Émission du certificat"
-echo "[5/8] Émission du certificat"
+CURRENT_STEP="[5/8] Issue the certificate"
+echo "[5/8] Issue the certificate"
 if ! "$ACME" --issue \
     -d "$DOMAIN" \
     -d "www.$DOMAIN" \
     -w "$WEBROOT" \
     --force; then
-    fail_after_remove "l'émission du certificat a échoué"
+    fail_after_remove "certificate issuance failed"
 fi
 
-CURRENT_STEP="[6/8] Installation du certificat"
-echo "[6/8] Installation du certificat"
+CURRENT_STEP="[6/8] Install the certificate"
+echo "[6/8] Install the certificate"
 if ! { mkdir -p "$CERT_DIR" && "$ACME" --install-cert \
     -d "$DOMAIN" \
     --key-file "$CERT_DIR/privkey.pem" \
     --fullchain-file "$CERT_DIR/fullchain.pem" \
     --reloadcmd "$LSWS restart"; }; then
-    fail_after_remove "l'installation du certificat a échoué"
+    fail_after_remove "certificate installation failed"
 fi
 
-CURRENT_STEP="[7/8] Redémarrage OpenLiteSpeed"
-echo "[7/8] Redémarrage OpenLiteSpeed"
+CURRENT_STEP="[7/8] Restart OpenLiteSpeed"
+echo "[7/8] Restart OpenLiteSpeed"
 if ! "$LSWS" restart; then
-    echo "Erreur : le certificat est installé, mais OpenLiteSpeed n'a pas redémarré." >&2
-    echo "Redémarrez-le manuellement : $LSWS restart" >&2
+    echo "Error: the certificate is installed, but OpenLiteSpeed did not restart." >&2
+    echo "Restart it manually: $LSWS restart" >&2
     exit 1
 fi
 
-CURRENT_STEP="[8/8] Vérification du certificat servi"
-echo "[8/8] Vérification du certificat servi"
+CURRENT_STEP="[8/8] Verify the served certificate"
+echo "[8/8] Verify the served certificate"
 if ! openssl x509 \
     -in "$CERT_DIR/fullchain.pem" \
     -noout \
     -dates; then
-    fail_after_remove "la vérification du certificat local a échoué"
+    fail_after_remove "verifying the local certificate failed"
 fi
 verify_served_certificate
 
 echo
-echo "SSL renouvelé avec succès pour ${DOMAIN}"
+echo "SSL successfully renewed for ${DOMAIN}"
 if [ -n "$ARCHIVE" ]; then
     echo
-    echo "Sauvegarde de l'ancien certificat conservée :"
+    echo "Backup of the previous certificate kept:"
     echo "  ${ARCHIVE}"
-    echo "Restauration manuelle si nécessaire :"
+    echo "Manual restore if needed:"
     echo "  tar -xzf ${ARCHIVE} -P -C / && ${LSWS} restart"
 fi
