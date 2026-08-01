@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.0] - 2026-08-01
+
+### Added
+
+- CLI help (`--help` / `-h`) with usage examples.
+- Simulation mode `--check`: scans certificates, shows expiry dates and which ones would be renewed, without modifying anything or restarting OpenLiteSpeed.
+- Clear handling of invalid arguments (unknown options, invalid thresholds, unknown domains).
+- `set -euo pipefail` and consistent logging helpers.
+- OpenLiteSpeed restart is now secured: the binary is checked for existence/executability before restart, with a clear warning otherwise.
+- Single-domain mode now also detects ECC certificates (`<domain>_ecc`).
+
+### Changed
+
+- Replaced fragile `ls | head` with `find` (robust against filenames with spaces).
+- Final summary now reports: certificates checked, needing renewal, renewed, failed, and the actual OpenLiteSpeed restart status.
+- The `--force` behavior is documented in the code (workaround for CyberPanel's broken renewal scheduler).
+
 ## [1.1.0] - 2026-08-01
 
 ### Added

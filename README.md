@@ -12,10 +12,11 @@ These scripts provide a direct `acme.sh`-based solution:
 
 Renews certificates that were previously issued and installed with `acme.sh`.
 
-It supports two modes:
+It supports three modes:
 
 - **Auto mode (recommended):** scans all certificates registered in `acme.sh` and renews every one that expires within a configurable number of days (default: **10**).
-- **Single domain mode:** renews one specific domain, ignoring expiry.
+- **Single domain mode:** renews one specific domain, ignoring expiry (works for both RSA and ECC certificates).
+- **Check mode (`--check`):** simulation that scans certificates and reports which ones would be renewed, without modifying anything.
 
 What it does for each certificate to renew:
 
@@ -57,8 +58,14 @@ What it does:
 # Auto mode with a custom threshold (e.g. 30 days)
 ./renew-ssl.sh 30
 
-# Single domain mode: renew a specific certificate
+# Single domain mode: renew a specific certificate (RSA or ECC)
 ./renew-ssl.sh example.com
+
+# Simulation: show expiry dates and which certificates would be renewed
+./renew-ssl.sh --check
+
+# Help
+./renew-ssl.sh --help
 
 # Full re-issue / repair
 ./fix-ssl.sh example.com
