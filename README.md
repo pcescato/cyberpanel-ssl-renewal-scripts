@@ -13,6 +13,7 @@ Bash scripts to renew and repair SSL certificates on CyberPanel 2.x directly via
 - CyberPanel 2.x
 - OpenLiteSpeed
 - `acme.sh` installed at `/root/.acme.sh/` (CyberPanel default)
+- `curl` — used by `fix-ssl.sh` to validate the webroot challenge path (optional: without it, that check is skipped with a warning)
 - **Root access** — the scripts write to `/etc/letsencrypt/live/`, read `/root/.acme.sh/`, and restart OpenLiteSpeed
 
 ## Scripts
@@ -42,15 +43,18 @@ A more thorough, step-by-step fix that re-issues the certificate from scratch. U
 
 Before replacing a certificate, the script creates a timestamped backup of the existing certificate and acme.sh configuration. Backups are stored in `/root/ssl-backups/<domain>/<timestamp>/`, kept after a successful fix, and the script refuses to remove the old registration if the backup could not be created.
 
+The script also validates the result end to end: **before issuing** it checks that the HTTP-01 challenge path is actually reachable from the public internet, and **after installing** it checks that the certificate really served by the server matches the new one.
+
 What it does:
 
-1. Creates a timestamped backup of the existing certificate and acme.sh configuration in `/root/ssl-backups/<domain>/<timestamp>/`.
-2. Switches `acme.sh` to the **Let's Encrypt production** CA (in case it was left in staging mode).
-3. Removes any existing `acme.sh` registration for the domain (errors are ignored).
-4. **Issues a new certificate** for `<domain>` and `www.<domain>` using the **webroot** method against `/home/<domain>/public_html`.
-5. Creates `/etc/letsencrypt/live/<domain>/` and **installs** the certificate there.
-6. Restarts OpenLiteSpeed to reload the certificate.
-7. Prints the certificate validity dates as a final check.
+1. **Validates the webroot challenge path** before any `acme.sh` call: writes a temporary file in `/home/<domain>/public_html/.well-known/acme-challenge/` and fetches it over HTTP with `curl` (mirroring Let's Encrypt's HTTP-01 request). If the file is not served correctly, the script stops before issuing, since `acme.sh` would fail too.
+2. Creates a timestamped backup of the existing certificate and acme.sh configuration in `/root/ssl-backups/<domain>/<timestamp>/`.
+3. Switches `acme.sh` to the **Let's Encrypt production** CA (in case it was left in staging mode).
+4. Removes any existing `acme.sh` registration for the domain (errors are ignored).
+5. **Issues a new certificate** for `<domain>` and `www.<domain>` using the **webroot** method against `/home/<domain>/public_html`.
+6. Creates `/etc/letsencrypt/live/<domain>/` and **installs** the certificate there.
+7. Restarts OpenLiteSpeed to reload the certificate.
+8. **Verifies the served certificate**: shows the local certificate validity dates, then compares the SHA256 fingerprint of the installed certificate with the one presented by the server over HTTPS (`openssl s_client -connect <domain>:443 -servername <domain>`). If they differ, OpenLiteSpeed is still serving the old certificate and the script reports it as an error.
 
 ### Differences
 

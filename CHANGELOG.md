@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1] - 2026-08-01
+
+### Improved
+- Added certificate backup before destructive operations in fix-ssl.sh.
+- Added HTTP-01 challenge validation before Let's Encrypt issuance.
+- Added post-install certificate verification against the live OpenLiteSpeed endpoint.
+- Improved failure handling during certificate recovery.
+
 ## [1.0.0] - 2026-08-01
 
 ### Added
