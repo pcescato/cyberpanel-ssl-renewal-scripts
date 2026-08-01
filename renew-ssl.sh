@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 #
-# renew-ssl.sh — Renouvellement des certificats SSL CyberPanel via acme.sh.
+# renew-ssl.sh — CyberPanel SSL certificate renewal via acme.sh.
 #
-# CyberPanel 2.x embarque un scheduler de renouvellement SSL qui peut tomber
-# en panne. Ce script contourne ce scheduler en appelant acme.sh directement.
+# CyberPanel 2.x ships an SSL renewal scheduler that can break. This script
+# bypasses it by calling acme.sh directly.
 #
-# Les certificats renouvelés sont installés dans
-# /etc/letsencrypt/live/<domaine>/ (privkey.pem + fullchain.pem), l'emplacement
-# attendu par CyberPanel et OpenLiteSpeed.
+# Renewed certificates are installed into
+# /etc/letsencrypt/live/<domain>/ (privkey.pem + fullchain.pem), the location
+# expected by CyberPanel and OpenLiteSpeed.
 #
-# Dépendances : bash, acme.sh, openssl, date, find (aucune autre).
+# Dependencies: bash, acme.sh, openssl, date, find (no others).
 
 set -euo pipefail
 
@@ -17,11 +17,11 @@ set -euo pipefail
 # Configuration
 # --------------------------------------------------------------------------
 
-ACME="${ACME:-/root/.acme.sh/acme.sh}"        # client ACME (acme.sh)
-ACME_HOME="${ACME_HOME:-/root/.acme.sh}"      # registres des certificats
-LSWS="${LSWS:-/usr/local/lsws/bin/lswsctrl}"  # contrôle OpenLiteSpeed
-CERT_BASE="${CERT_BASE:-/etc/letsencrypt/live}"  # dossier cible CyberPanel
-DEFAULT_THRESHOLD=10                          # fenêtre d'expiration (jours)
+ACME="${ACME:-/root/.acme.sh/acme.sh}"        # ACME client (acme.sh)
+ACME_HOME="${ACME_HOME:-/root/.acme.sh}"      # certificate registrations
+LSWS="${LSWS:-/usr/local/lsws/bin/lswsctrl}"  # OpenLiteSpeed control
+CERT_BASE="${CERT_BASE:-/etc/letsencrypt/live}"  # CyberPanel target directory
+DEFAULT_THRESHOLD=10                          # expiry window (days)
 
 MODE=auto
 SIMULATION=0
@@ -29,7 +29,7 @@ THRESHOLD="$DEFAULT_THRESHOLD"
 DOMAIN=""
 
 # --------------------------------------------------------------------------
-# Journalisation
+# Logging
 # --------------------------------------------------------------------------
 
 log() { printf '[renew-ssl][%s] %s\n' "$(date '+%F %T')" "$*"; }
@@ -42,7 +42,7 @@ die() {
 }
 
 # --------------------------------------------------------------------------
-# Aide et gestion des arguments
+# Help and argument handling
 # --------------------------------------------------------------------------
 
 usage() {
@@ -74,7 +74,7 @@ Variables d'environnement (optionnelles) :
 EOF
 }
 
-# Parse les arguments et définit MODE / SIMULATION / THRESHOLD / DOMAIN.
+# Parse the arguments and set MODE / SIMULATION / THRESHOLD / DOMAIN.
 parse_args() {
     case "${1:-}" in
         '')
@@ -104,7 +104,7 @@ parse_args() {
 }
 
 # --------------------------------------------------------------------------
-# Vérifications préalables
+# Pre-flight checks
 # --------------------------------------------------------------------------
 
 verify_prereqs() {
@@ -116,11 +116,11 @@ verify_prereqs() {
 }
 
 # --------------------------------------------------------------------------
-# Helpers sur les certificats
+# Certificate helpers
 # --------------------------------------------------------------------------
 
-# Retourne le vrai nom de domaine depuis un répertoire acme.sh
-# (enlève le suffixe _ecc des certificats ECC).
+# Returns the real domain name from an acme.sh directory
+# (strips the _ecc suffix of ECC certificates).
 domain_name() {
     local dir_name="$1"
     if [[ "$dir_name" == *_ecc ]]; then
@@ -130,15 +130,15 @@ domain_name() {
     fi
 }
 
-# Retourne le fichier du certificat feuille (celui du domaine), et non la CA
-# ou la chaîne. Un répertoire acme.sh contient plusieurs .cer :
-#   <domaine>.cer   -> certificat du domaine (feuille)  <-- celui qu'on veut
-#   ca.cer          -> certificat de l'autorité (CA)      (ex. expire en 2028)
-#   fullchain.cer   -> feuille + CA (chaîne complète)
-# Sans ce tri, on peut lire la date d'expiration de la CA au lieu de celle du
-# domaine et faussement écarter le certificat. On préfère donc <répertoire>.cer,
-# puis fullchain.cer (openssl lit la feuille en premier), et en dernier recours
-# tout .cer qui n'est ni la CA ni la chaîne. Utilise find (robuste espaces).
+# Returns the leaf certificate file (the domain one), not the CA or the
+# chain. An acme.sh directory contains several .cer files:
+#   <domain>.cer   -> the domain certificate (leaf)  <-- the one we want
+#   ca.cer          -> the CA certificate              (e.g. valid until 2028)
+#   fullchain.cer   -> leaf + CA (full chain)
+# Without this filtering, the CA expiry date may be read instead of the
+# domain's and the certificate wrongly skipped. We prefer <directory>.cer,
+# then fullchain.cer (openssl reads the leaf first), and as a last resort any
+# .cer that is neither the CA nor the chain. Uses find (space-safe).
 cert_file_in() {
     local cert_dir="$1"
     local dir_name file
@@ -166,7 +166,7 @@ cert_file_in() {
     return 0
 }
 
-# Retourne le nombre de jours restants avant expiration (vide si erreur).
+# Returns the number of days remaining before expiry (empty on error).
 days_until_expiry() {
     local cert_file="$1"
     local end_date month day time year month_num end_epoch now_epoch remaining
@@ -179,13 +179,13 @@ days_until_expiry() {
         return 0
     fi
 
-    # La sortie d'openssl a toujours le format fixe "Mmm DD HH:MM:SS YYYY GMT"
-    # (mois en anglais, heure GMT), indépendamment de la locale du système.
-    # On parse ces champs nous-mêmes puis on construit une date ISO-8601, dont
-    # le parsing par `date -d` est fiable et identique sur toutes les locales
-    # et versions de GNU date — contrairement au parsing direct de la chaîne
-    # libre anglaise "Oct 29 22:00:54 2026 GMT", qui peut être mal interprétée
-    # selon la locale/version (ex. "expire dans 763 jour(s)" au lieu de 89).
+    # openssl output always uses the fixed format "Mmm DD HH:MM:SS YYYY GMT"
+    # (English months, GMT time), regardless of the system locale.
+    # We parse these fields ourselves and build an ISO-8601 date, whose
+    # parsing by `date -d` is reliable and identical across all locales and
+    # GNU date versions — unlike directly parsing the free-form English string
+    # "Oct 29 22:00:54 2026 GMT", which can be misread depending on
+    # locale/version (e.g. "expires in 763 days" instead of 89).
     read -r month day time year _ <<< "$end_date"
 
     case "$month" in
@@ -212,10 +212,10 @@ days_until_expiry() {
     now_epoch=$(date +%s)
     remaining=$(( (end_epoch - now_epoch) / 86400 ))
 
-    # Garde-fou : un certificat ACME (Let's Encrypt / ZeroSSL) est valable au
-    # maximum ~90 jours. Une valeur dans plusieurs centaines de jours (ou un
-    # passé lointain) trahit un calcul erroné : on ignore le certificat plutôt
-    # que de le renouveler (ou de l'afficher) à tort.
+    # Safety net: an ACME certificate (Let's Encrypt / ZeroSSL) is valid for
+    # at most ~90 days. A value several hundred days away (or far in the past)
+    # signals a bad calculation: skip the certificate instead of renewing (or
+    # displaying) it wrongly.
     if [ "$remaining" -gt 400 ] || [ "$remaining" -lt -400 ]; then
         warn "Date d'expiration aberrante pour $cert_file : $end_date (${remaining} jour(s)) — certificat ignoré"
         return 0
@@ -225,11 +225,11 @@ days_until_expiry() {
 }
 
 # --------------------------------------------------------------------------
-# Renouvellement d'un certificat
+# Renewing a certificate
 # --------------------------------------------------------------------------
 
-# Renouvelle un certificat (un répertoire acme.sh = un certificat).
-# En simulation (--check), n'effectue aucun changement.
+# Renews a certificate (one acme.sh directory = one certificate).
+# In simulation mode (--check), does not change anything.
 renew_one() {
     local dir_name="$1"
     local domain
@@ -247,10 +247,10 @@ renew_one() {
 
     log "Renouvellement de $domain en cours..."
 
-    # --force est volontaire : le scheduler de renouvellement intégré à
-    # CyberPanel est défaillant, on force donc la réémission dès qu'on a
-    # décidé qu'un renouvellement était nécessaire (fenêtre d'expiration
-    # dépassée en mode auto, ou demande explicite en mode domaine unique).
+    # --force is intentional: CyberPanel's built-in renewal scheduler is
+    # unreliable, so we force re-issuance as soon as we decide a renewal is
+    # needed (expiry window exceeded in auto mode, or explicit request in
+    # single-domain mode).
     if ! "$ACME" --renew -d "$domain" --force "${ecc_args[@]}"; then
         warn "Échec du renouvellement pour $domain"
         return 1
@@ -272,10 +272,10 @@ renew_one() {
 }
 
 # --------------------------------------------------------------------------
-# Redémarrage OpenLiteSpeed
+# OpenLiteSpeed restart
 # --------------------------------------------------------------------------
 
-# Redémarre OpenLiteSpeed uniquement si le binaire est présent et exécutable.
+# Restarts OpenLiteSpeed only if the binary is present and executable.
 restart_ols() {
     if [ ! -x "$LSWS" ]; then
         warn "OpenLiteSpeed introuvable ou non exécutable : $LSWS"
@@ -286,9 +286,9 @@ restart_ols() {
     "$LSWS" restart
 }
 
-# Restart unique, uniquement si au moins un certificat a été renouvelé.
-# En simulation, ne redémarre jamais. Positionne la variable RESTART_STATUS
-# à "yes", "no", "no (simulation)" ou "failed".
+# Single restart, only if at least one certificate was renewed.
+# Never restarts in simulation mode. Sets the RESTART_STATUS variable to
+# "yes", "no", "no (simulation)" or "failed".
 restart_ols_if_needed() {
     local renewed="$1"
 
@@ -307,7 +307,7 @@ restart_ols_if_needed() {
 }
 
 # --------------------------------------------------------------------------
-# Résumé final
+# Final summary
 # --------------------------------------------------------------------------
 
 summary() {
@@ -324,11 +324,11 @@ summary() {
 }
 
 # --------------------------------------------------------------------------
-# Modes d'exécution
+# Execution modes
 # --------------------------------------------------------------------------
 
-# Mode automatique : scanne tous les certificats et renouvelle ceux dont
-# l'expiration tombe dans la fenêtre définie par le seuil.
+# Auto mode: scans all certificates and renews those whose expiry falls
+# within the threshold window.
 run_auto_mode() {
     local threshold="$1"
     local checked=0 needing=0 renewed=0 failed=0
@@ -339,7 +339,7 @@ run_auto_mode() {
 
     shopt -s nullglob
     for cert_dir in "$ACME_HOME"/*/; do
-        # Dossier réservé au client acme.sh lui-même.
+        # Directory reserved for the acme.sh client itself.
         dir_name=${cert_dir%/}
         dir_name=${dir_name##*/}
         [ "$dir_name" = "acme.sh" ] && continue
@@ -374,8 +374,8 @@ run_auto_mode() {
     exit 0
 }
 
-# Mode domaine unique : force le renouvellement d'un domaine précis.
-# Fonctionne avec un certificat RSA (<domaine>) et/ou ECC (<domaine>_ecc).
+# Single-domain mode: forces the renewal of a specific domain.
+# Works with an RSA certificate (<domain>) and/or ECC (<domain>_ecc).
 run_single_domain_mode() {
     local domain="$1"
     local dir_list=()
@@ -412,7 +412,7 @@ run_single_domain_mode() {
 }
 
 # --------------------------------------------------------------------------
-# Point d'entrée
+# Entry point
 # --------------------------------------------------------------------------
 
 main() {

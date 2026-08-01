@@ -17,13 +17,13 @@ echo "======================================"
 echo " Renouvellement SSL : ${DOMAIN}"
 echo "======================================"
 
-# Vérification acme.sh
+# Check acme.sh
 if [ ! -x "$ACME" ]; then
     echo "Erreur : acme.sh introuvable"
     exit 1
 fi
 
-# Vérification webroot
+# Check webroot
 if [ ! -d "$WEBROOT" ]; then
     echo "Erreur : webroot introuvable : $WEBROOT"
     echo "Vérifie le chemin du site CyberPanel"
