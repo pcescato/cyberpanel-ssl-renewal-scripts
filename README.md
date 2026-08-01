@@ -1,10 +1,19 @@
 # CyberPanel SSL Renewal Scripts
 
-CyberPanel's automatic SSL renewal can fail in some setups, leaving certificates close to expiration despite a successful renewal message in the panel.
+Bash scripts to renew and repair SSL certificates on CyberPanel 2.x directly via `acme.sh`, bypassing CyberPanel's unreliable built-in renewal scheduler.
 
-These scripts provide a direct `acme.sh`-based solution:
-- automatic renewal of existing certificates;
-- full certificate re-issuance when a certificate is stuck, misconfigured, or issued from the wrong CA.
+## Why this exists
+
+- CyberPanel can report a **successful SSL renewal** while the certificate actually served remains close to expiration.
+- In some cases `acme.sh` is left configured with the **Let's Encrypt staging** CA, so "renewals" produce certificates that browsers reject.
+- These scripts renew — and repair — certificates **directly via `acme.sh`**, without going through the panel.
+
+## Requirements
+
+- CyberPanel 2.x
+- OpenLiteSpeed
+- `acme.sh` installed at `/root/.acme.sh/` (CyberPanel default)
+- **Root access** — the scripts write to `/etc/letsencrypt/live/`, read `/root/.acme.sh/`, and restart OpenLiteSpeed
 
 ## Scripts
 
@@ -73,6 +82,25 @@ What it does:
 
 Replace `example.com` with your actual domain. The domain must be hosted in CyberPanel (the webroot `/home/<domain>/public_html` must exist for `fix-ssl.sh`).
 
+## Debugging
+
+Check what `acme.sh` knows about your certificates:
+
+```bash
+acme.sh --list
+```
+
+Verify the certificate **actually served** by the web server (adjust host and port if needed):
+
+```bash
+openssl s_client -connect example.com:443 -servername example.com </dev/null 2>/dev/null \
+    | openssl x509 -noout -dates
+```
+
+The `notAfter` date should be within the next ~90 days for a valid Let's Encrypt certificate. If the served certificate is close to expiration, run `renew-ssl.sh example.com`, or `fix-ssl.sh example.com` to re-issue it from scratch.
+
+Before changing anything, `./renew-ssl.sh --check` shows every certificate, its expiry date, and which ones would be renewed — useful to confirm the diagnosis first.
+
 ## Permissions
 
 Both scripts need to be executable. Run from the directory containing the scripts:
@@ -106,3 +134,7 @@ Tips:
 - Make sure the script has execute permission (`chmod +x renew-ssl.sh`); cron requires an absolute path and runs as root.
 
 If a renewal ever fails, you can still run `fix-ssl.sh example.com` manually to re-issue the certificate from scratch.
+
+## License
+
+[MIT](LICENSE)
