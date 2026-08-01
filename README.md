@@ -1,6 +1,10 @@
 # CyberPanel SSL Renewal Scripts
 
-CyberPanel's built-in automatic SSL renewal has stopped working in some setups, so these two scripts perform the renewal directly with `acme.sh`, the ACME client used by CyberPanel.
+CyberPanel's automatic SSL renewal can fail in some setups, leaving certificates close to expiration despite a successful renewal message in the panel.
+
+These scripts provide a direct `acme.sh`-based solution:
+- automatic renewal of existing certificates;
+- full certificate re-issuance when a certificate is stuck, misconfigured, or issued from the wrong CA.
 
 ## Scripts
 
