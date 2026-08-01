@@ -40,14 +40,17 @@ The expiry date is read from each certificate with `openssl x509`, so only certi
 
 A more thorough, step-by-step fix that re-issues the certificate from scratch. Use this one when renewal fails or the certificate is in a broken/staging state.
 
+Before replacing a certificate, the script creates a timestamped backup of the existing certificate and acme.sh configuration. Backups are stored in `/root/ssl-backups/<domain>/<timestamp>/`, kept after a successful fix, and the script refuses to remove the old registration if the backup could not be created.
+
 What it does:
 
-1. Switches `acme.sh` to the **Let's Encrypt production** CA (in case it was left in staging mode).
-2. Removes any existing `acme.sh` registration for the domain (errors are ignored).
-3. **Issues a new certificate** for `<domain>` and `www.<domain>` using the **webroot** method against `/home/<domain>/public_html`.
-4. Creates `/etc/letsencrypt/live/<domain>/` and **installs** the certificate there.
-5. Restarts OpenLiteSpeed to reload the certificate.
-6. Prints the certificate validity dates as a final check.
+1. Creates a timestamped backup of the existing certificate and acme.sh configuration in `/root/ssl-backups/<domain>/<timestamp>/`.
+2. Switches `acme.sh` to the **Let's Encrypt production** CA (in case it was left in staging mode).
+3. Removes any existing `acme.sh` registration for the domain (errors are ignored).
+4. **Issues a new certificate** for `<domain>` and `www.<domain>` using the **webroot** method against `/home/<domain>/public_html`.
+5. Creates `/etc/letsencrypt/live/<domain>/` and **installs** the certificate there.
+6. Restarts OpenLiteSpeed to reload the certificate.
+7. Prints the certificate validity dates as a final check.
 
 ### Differences
 
